@@ -4,9 +4,10 @@ import torch
 from pytorch_lightning import LightningModule
 from torchmetrics import MaxMetric, MeanMetric
 from torchmetrics.classification.accuracy import Accuracy
+from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 
-class MNISTLitModule(LightningModule):
+class ExtractorModule(LightningModule):
     """Example of LightningModule for MNIST classification.
 
     A LightningModule organizes your PyTorch code into 6 sections:
@@ -23,17 +24,28 @@ class MNISTLitModule(LightningModule):
 
     def __init__(
         self,
-        net: torch.nn.Module,
+        encoder: torch.nn.Module,
+        pooling_model: torch.nn.Module,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler,
+        embedding_model_config=None
     ):
         super().__init__()
 
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False, ignore=["net"])
+        
+        if not embedding_model_config:
+            embedding_model_config = AutoConfig.from_pretrained(
+                self.hparams.model_name_or_path,
+                gradient_checkpointing=self.hparams.gradient_checkpointing,
+            )
 
-        self.net = net
+        self.word_embedding_model = AutoModel.from_config(embedding_model_config)
+        self.encoder_q = encoder
+        self.encoder_r = encoder
+        self.pooling_model = pooling_model
 
         # loss function
         self.criterion = torch.nn.CrossEntropyLoss()
@@ -51,8 +63,52 @@ class MNISTLitModule(LightningModule):
         # for tracking best so far validation accuracy
         self.val_acc_best = MaxMetric()
 
-    def forward(self, x: torch.Tensor):
-        return self.net(x)
+    def forward(
+        self, 
+        input_ids_q: torch.Tensor, 
+        input_ids_r: torch.Tensor, 
+        attention_mask_q: torch.Tensor, 
+        attention_mask_r: torch.Tensor, 
+        indicator_s: torch.Tensor,
+        sent_rep_mask=None,
+        token_type_ids=None,
+        sent_rep_token_ids=None,
+        sent_lengths=None,
+        sent_lengths_mask=None,
+        **kwargs
+    ):
+
+        inputs_q = {
+            "input_ids_q": input_ids_q,
+            "attention_mask_q": attention_mask_q,
+        }
+
+        inputs_r = {
+            "input_ids_r": input_ids_r,
+            "attention_mask_r": attention_mask_r,
+        }
+
+        outputs_q = self.word_embedding_model(**inputs_q, **kwargs)
+        outputs_r = self.word_embedding_model(**inputs_r, **kwargs)
+
+        word_vectors_q = outputs_q[0]
+        word_vectors_r = outputs_r[0]
+
+        interaction = word_vectors_q * word_vectors_r
+        interaction = torch.cat(interaction, indicator_s)
+
+        sents_vec, mask = self.pooling_model(
+            word_vectors=interaction,
+            sent_rep_token_ids=sent_rep_token_ids,
+            sent_rep_mask=sent_rep_mask,
+            sent_lengths=sent_lengths,
+            sent_lengths_mask=sent_lengths_mask,
+        )
+
+        res_q = self.encoder_q(sents_vec, mask)
+        res_r = self.encoder_r(sents_vec, mask)
+
+        return res_q, res_r, mask
 
     def on_train_start(self):
         # by default lightning executes validation step sanity checks before training starts,
@@ -144,5 +200,5 @@ if __name__ == "__main__":
     import pyrootutils
 
     root = pyrootutils.setup_root(__file__, pythonpath=True)
-    cfg = omegaconf.OmegaConf.load(root / "configs" / "model" / "mnist.yaml")
+    cfg = omegaconf.OmegaConf.load(root / "configs" / "model" / "extractor.yaml")
     _ = hydra.utils.instantiate(cfg)

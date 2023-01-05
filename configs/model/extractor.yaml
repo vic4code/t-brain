@@ -1,0 +1,42 @@
+_target_: src.models.extractor.ExtractorModule
+# tokenizer_name: t5-base
+# model_name_or_path:
+# tokenizer_no_use_fast:
+# gradient_checkpointing:
+
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 0.001
+  weight_decay: 0.0
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+  _partial_: true
+  mode: min
+  factor: 0.1
+  patience: 10
+
+tokenizer:
+  _target_: src.models.components.simple_dense_net.SimpleDenseNet
+  input_size: 784
+  lin1_size: 64
+  lin2_size: 128
+  lin3_size: 64
+  output_size: 10
+
+pooling_model:
+  _target_: src.models.components.pooling.Pooling
+  input_size: 784
+  lin1_size: 64
+  lin2_size: 128
+  lin3_size: 64
+  output_size: 10
+
+encoder:
+  _target_: src.models.components.classifier.SimpleLinearClassifier
+  input_size: 784
+  lin1_size: 64
+  lin2_size: 128
+  lin3_size: 64
+  output_size: 10

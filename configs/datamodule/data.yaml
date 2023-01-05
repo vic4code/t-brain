@@ -4,3 +4,9 @@ batch_size: 128
 train_val_test_split: [37_000, 1_000, 346]
 num_workers: 0
 pin_memory: False
+
+# Tokenizer settings
+tokenizer_name: ~
+model_name_or_path: bert-base-uncased
+tokenizer_no_use_fast: False
+gradient_checkpointing: False
